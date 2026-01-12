@@ -288,7 +288,7 @@ const App: React.FC = () => {
               <DocumentArrowUpIcon className="w-6 h-6 text-white" />
             </div>
             <div>
-              <h1 className="text-xl font-bold text-slate-900 leading-none">OCR Transcription Dashboard</h1>
+              <h1 className="text-xl font-bold text-slate-900 leading-none">OCR Dashboard</h1>
             </div>
           </div>
           <div className="flex items-center space-x-4">
