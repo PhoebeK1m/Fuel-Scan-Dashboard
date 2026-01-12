@@ -1,0 +1,8 @@
+[build]
+  command = "npm run dev"
+  publish = "dist"
+
+[dev]
+  command = "npm run dev"
+  port = 8888
+  targetPort = 3001

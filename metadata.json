@@ -1,0 +1,7 @@
+{
+  "name": "FuelScan OCR Dashboard",
+  "description": "A high-performance dashboard for parsing nuclear fuel element tables from images. Features automated OCR via Gemini 3, human-in-the-loop verification, and multi-format CSV export capabilities.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
