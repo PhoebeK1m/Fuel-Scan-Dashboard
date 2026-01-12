@@ -332,11 +332,6 @@ const App: React.FC = () => {
             </div>
             <div className="flex items-center space-x-2">
               <button 
-              onClick={previewFirstSelectedImage}>
-                <EyeIcon className="w-4 h-4 mr-2" />
-                Preview
-              </button>
-              <button 
                 onClick={downloadSelected}
                 className="inline-flex items-center px-3 py-1.5 bg-slate-800 hover:bg-slate-700 rounded-lg text-sm font-semibold transition"
               >
