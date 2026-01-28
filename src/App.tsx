@@ -9,8 +9,6 @@ import {
   ExclamationCircleIcon,
   TrashIcon,
   MagnifyingGlassIcon,
-  ChevronDownIcon,
-  ChevronUpIcon,
   XMarkIcon,
   EyeIcon, 
   PencilIcon
@@ -61,77 +59,103 @@ const App: React.FC = () => {
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const uploadedFiles = event.target.files;
-    if (!uploadedFiles) return;
+    if (!uploadedFiles || uploadedFiles.length === 0) return;
 
     setIsUploading(true);
-    const newFiles: ParsedFile[] = (Array.from(uploadedFiles) as File[]).map((f: File) => ({
-      id: Math.random().toString(36).substr(2, 9),
-      fileName: f.name,
-      elementNumber: 'Pending...',
-      status: ParseStatus.PROCESSING,
-      notes: '',
-      checkedByPhoebe: false,
-      checkedByJay: false,
-      rows: [],
-      timestamp: Date.now(),
-      imageUrl: URL.createObjectURL(f)
-    }));
 
-    setFiles(prev => [...newFiles, ...prev]);
+    for (const file of Array.from(uploadedFiles)) {
+      const tempId = Math.random().toString(36).substr(2, 9);
 
-    for (let i = 0; i < uploadedFiles.length; i++) {
-      const file = uploadedFiles[i];
-      if (!file) continue;
-      const targetId = newFiles[i].id;
+      // 1. Add pending UI row
+      setFiles(prev => [{
+        id: tempId,
+        fileName: file.name,
+        elementNumber: 'Pending...',
+        status: ParseStatus.PROCESSING,
+        notes: '',
+        checkedByPhoebe: false,
+        checkedByJay: false,
+        rows: [],
+        timestamp: Date.now(),
+        imageUrl: URL.createObjectURL(file),
+      }, ...prev]);
 
       try {
         const base64 = await fileToBase64(file);
-        // Upload image to backend
+
         const uploadRes = await fetch('/.netlify/functions/uploadImage', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             fileName: file.name,
             base64Image: base64,
-            contentType: file.type
-          })
+            contentType: file.type,
+          }),
         });
+
+        if (!uploadRes.ok) throw new Error('Image upload failed');
         const { imageUrl } = await uploadRes.json();
-        
-        const enqueueRes = await fetch('/.netlify/functions/enqueueJob', {
+
+        const parseRes = await fetch('/.netlify/functions/parseFuelImage', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ image_url: imageUrl }),
+        });
+
+        if (!parseRes.ok) throw new Error('Parsing failed');
+        const parsed = await parseRes.json();
+
+        const saveRes = await fetch('/.netlify/functions/saveResults', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             file_name: file.name,
             image_url: imageUrl,
-            contentType: file.type,
-          })
+            element_number: parsed.elementNumber,
+            notes: parsed.outliers,
+            rows: parsed.rows,
+            status: 'COMPLETED',
+            checked_by_phoebe: false,
+            checked_by_jay: false,
+          }),
         });
-        const { id: backendId } = await enqueueRes.json();
 
-        // Update local UI
-        setFiles(prev => prev.map(f => 
-          f.id === targetId ? 
-          {
-            ...f,
-            id: backendId,
-            imageUrl: imageUrl,
-            status: ParseStatus.PROCESSING,
-          } : f
-        ));
-        
+        if (!saveRes.ok) throw new Error('Saving results failed');
+        const { id } = await saveRes.json();
+
+        // 2. Update existing row
+        setFiles(prev =>
+          prev.map(f =>
+            f.id === tempId
+              ? {
+                  ...f,
+                  id,
+                  elementNumber: parsed.element_number,
+                  notes: parsed.notes,
+                  rows: parsed.rows,
+                  status: ParseStatus.COMPLETED,
+                  imageUrl,
+                }
+              : f
+          )
+        );
       } catch (error) {
-        setFiles(prev => prev.map(f => 
-          f.id === targetId ? {
-            ...f,
-            status: ParseStatus.FAILED,
-            error: error instanceof Error ? error.message : "Parsing failed"
-          } : f
-        ));
+        setFiles(prev =>
+          prev.map(f =>
+            f.id === tempId
+              ? {
+                  ...f,
+                  status: ParseStatus.FAILED,
+                  error: error instanceof Error ? error.message : 'Parsing failed',
+                }
+              : f
+          )
+        );
       }
     }
+
     setIsUploading(false);
-    if (fileInputRef.current) fileInputRef.current.value = "";
+    if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
   const fileToBase64 = (file: File): Promise<string> => {
@@ -169,16 +193,6 @@ const App: React.FC = () => {
       })
     );
   };
-
-
-  // const toggleNoteExpansion = (id: string) => {
-  //   setExpandedNotes(prev => {
-  //     const next = new Set(prev);
-  //     if (next.has(id)) next.delete(id);
-  //     else next.add(id);
-  //     return next;
-  //   });
-  // };
 
   const toggleSelection = (id: string) => {
     setSelectedIds(prev => {
@@ -309,14 +323,15 @@ const App: React.FC = () => {
     }
   };
 
-  const [editingFile, setEditingFile] = useState<ParsedFile | null>(null);
-
   const stats = {
     total: files.length,
     completed: files.filter(f => f.status === ParseStatus.COMPLETED).length,
     pending: files.filter(f => f.status === ParseStatus.PROCESSING).length,
     failed: files.filter(f => f.status === ParseStatus.FAILED).length,
   };
+
+  const [columnOrder, setColumnOrder] = useState<string[]>([]);
+
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col relative">
@@ -341,7 +356,6 @@ const App: React.FC = () => {
               </button>
               <input 
                 type="file" 
-                multiple 
                 accept="image/*" 
                 className="hidden" 
                 ref={fileInputRef} 
@@ -448,7 +462,7 @@ const App: React.FC = () => {
               <button onClick={() => setEditingFile(null)}>✕</button>
             </div>
 
-            <div className="overflow-auto p-4 flex-1">
+            {/* <div className="overflow-auto p-4 flex-1">
               <table className="w-full text-xs border">
                 <tbody>
                   {editingFile.rows.map((row, rIdx) => (
@@ -474,6 +488,48 @@ const App: React.FC = () => {
                   ))}
                 </tbody>
               </table>
+            </div> */}
+            <div className="overflow-auto p-4 flex-1">
+              {editingFile.rows.length > 0 && (
+                <table className="w-full text-xs border border-slate-300 border-collapse">
+                  <thead className="sticky top-0 bg-slate-100">
+                    <tr>
+                      {Object.keys(editingFile.rows[0]).map(col => (
+                        <th
+                          key={col}
+                          className="border border-slate-300 px-2 py-1 text-left font-semibold"
+                        >
+                          {col}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+
+                  <tbody>
+                    {editingFile.rows.map((row, rIdx) => (
+                      <tr key={rIdx}>
+                        {Object.keys(editingFile.rows[0]).map(col => (
+                          <td key={col} className="border border-slate-300 p-1">
+                            <input
+                              value={(row as any)[col] ?? ''}
+                              onChange={(e) => {
+                                const value = e.target.value;
+                                setEditingFile(prev => {
+                                  if (!prev) return prev;
+                                  const rows = [...prev.rows];
+                                  rows[rIdx] = { ...rows[rIdx], [col]: value };
+                                  return { ...prev, rows };
+                                });
+                              }}
+                              className="w-full border rounded px-1"
+                            />
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
             </div>
 
             <div className="p-4 border-t flex justify-end gap-2">
