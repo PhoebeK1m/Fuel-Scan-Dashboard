@@ -49,15 +49,36 @@ const RESPONSE_SCHEMA = {
 };
 
 export const handler: Handler = async (event) => {
+    console.log("PARSE FUNCTION HIT");
+
     if (event.httpMethod !== "POST") {
         return { statusCode: 405, body: "Method Not Allowed" };
     }
+    
+    const { imageUrl } = JSON.parse(event.body || '{}');
+    console.log("PARSED BODY:", event.body);
 
-    const { base64Image, mimeType } = JSON.parse(event.body || "{}");
-
-    if (!base64Image || !mimeType) {
-        return { statusCode: 400, body: "Missing image data" };
+    if (!imageUrl) {
+        return {
+            statusCode: 400,
+            body: 'Missing imageUrl',
+        };
     }
+
+
+    // Fetch image from Supabase Storage
+    const imageRes = await fetch(imageUrl);
+
+    if (!imageRes.ok) {
+    return {
+        statusCode: 400,
+        body: 'Failed to fetch image',
+    };
+    }
+
+    const buffer = Buffer.from(await imageRes.arrayBuffer());
+    const base64Image = buffer.toString('base64');
+
 
     const ai = new GoogleGenAI({
         apiKey: process.env.GEMINI_API_KEY!,
@@ -71,8 +92,8 @@ export const handler: Handler = async (event) => {
             { text: OCR_PROMPT },
             {
                 inlineData: {
-                data: base64Image.split(",")[1],
-                mimeType,
+                data: base64Image,
+                mimeType: "image/jpeg",
                 },
             },
             ],
@@ -84,8 +105,14 @@ export const handler: Handler = async (event) => {
         },
     });
 
+    const parsed = JSON.parse(response.text);
+
     return {
         statusCode: 200,
-        body: response.text,
+        headers: {
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify(parsed),
     };
+
 };

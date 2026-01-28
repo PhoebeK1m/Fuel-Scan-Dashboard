@@ -12,20 +12,24 @@ import {
   ChevronDownIcon,
   ChevronUpIcon,
   XMarkIcon,
-  EyeIcon
+  EyeIcon, 
+  PencilIcon
 } from '@heroicons/react/24/outline';
 import { ParsedFile, ParseStatus } from './types';
-import { parseFuelImage } from './services/geminiService';
 import { convertToCSV, downloadCSV } from './utils/csvHelper';
+import { useUpdates } from './services/useUpdates'
+
 
 const App: React.FC = () => {
   const [files, setFiles] = useState<ParsedFile[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
-  const [expandedNotes, setExpandedNotes] = useState<Set<string>>(new Set());
+  // const [expandedNotes, setExpandedNotes] = useState<Set<string>>(new Set());
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [previewImage, setPreviewImage] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useUpdates(setFiles);
 
   useEffect(() => {
     const loadSavedFiles = async () => {
@@ -93,37 +97,26 @@ const App: React.FC = () => {
           })
         });
         const { imageUrl } = await uploadRes.json();
-        const result = await parseFuelImage(base64, file.type);
-
-        // Save to backend
-        const saveRes = await fetch('/.netlify/functions/saveResults', {
+        
+        const enqueueRes = await fetch('/.netlify/functions/enqueueJob', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             file_name: file.name,
-            element_number: result.elementNumber,
-            notes: result.outliers,
-            rows: result.rows,
-            status: 'COMPLETED',
-            checked_by_phoebe: false,
-            checked_by_jay: false,
-            image_url: imageUrl
-          }),
+            image_url: imageUrl,
+            contentType: file.type,
+          })
         });
-
-        const { id: dbId } = await saveRes.json();
+        const { id: backendId } = await enqueueRes.json();
 
         // Update local UI
         setFiles(prev => prev.map(f => 
           f.id === targetId ? 
           {
             ...f,
-            id: dbId,
+            id: backendId,
             imageUrl: imageUrl,
-            elementNumber: result.elementNumber,
-            status: ParseStatus.COMPLETED,
-            notes: result.outliers,
-            rows: result.rows
+            status: ParseStatus.PROCESSING,
           } : f
         ));
         
@@ -178,14 +171,14 @@ const App: React.FC = () => {
   };
 
 
-  const toggleNoteExpansion = (id: string) => {
-    setExpandedNotes(prev => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
+  // const toggleNoteExpansion = (id: string) => {
+  //   setExpandedNotes(prev => {
+  //     const next = new Set(prev);
+  //     if (next.has(id)) next.delete(id);
+  //     else next.add(id);
+  //     return next;
+  //   });
+  // };
 
   const toggleSelection = (id: string) => {
     setSelectedIds(prev => {
@@ -217,11 +210,11 @@ const App: React.FC = () => {
       }
       return prev.filter(f => f.id !== id);
     });
-    setExpandedNotes(prev => {
-      const next = new Set(prev);
-      next.delete(id);
-      return next;
-    });
+    // setExpandedNotes(prev => {
+    //   const next = new Set(prev);
+    //   next.delete(id);
+    //   return next;
+    // });
     setSelectedIds(prev => {
       const next = new Set(prev);
       next.delete(id);
@@ -236,11 +229,11 @@ const App: React.FC = () => {
       }
     });
     setFiles(prev => prev.filter(f => !selectedIds.has(f.id)));
-    setExpandedNotes(prev => {
-      const next = new Set(prev);
-      selectedIds.forEach(id => next.delete(id));
-      return next;
-    });
+    // setExpandedNotes(prev => {
+    //   const next = new Set(prev);
+    //   selectedIds.forEach(id => next.delete(id));
+    //   return next;
+    // });
     setSelectedIds(new Set());
   };
 
@@ -265,12 +258,58 @@ const App: React.FC = () => {
     });
   };
 
-  const previewFirstSelectedImage = () => {
-    const first = files.find(f => selectedIds.has(f.id));
-    if (first?.imageUrl) {
-      setPreviewImage(first.imageUrl);
+  const saveField = async (id: string, fields: Partial<ParsedFile>) => {
+    await fetch('/.netlify/functions/updateResult', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, ...fields }),
+    });
+  };
+
+  const [isProcessingQueue, setIsProcessingQueue] = useState(false);
+
+  const runQueueProcessor = async () => {
+    try {
+      setIsProcessingQueue(true);
+
+      const res = await fetch('/.netlify/functions/testProcessQueue', {
+        method: 'GET',
+      });
+
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text);
+      }
+
+      const result = await res.json();
+      console.log('Queue run result:', result);
+
+      // OPTIONAL: refresh results after processing
+      const refreshed = await fetch('/.netlify/functions/getResults');
+      const data = await refreshed.json();
+
+      setFiles(data.map((f: any) => ({
+        id: f.id,
+        fileName: f.file_name,
+        elementNumber: f.element_number,
+        notes: f.notes,
+        rows: f.rows,
+        status: f.status,
+        checkedByPhoebe: f.checked_by_phoebe,
+        checkedByJay: f.checked_by_jay,
+        timestamp: new Date(f.created_at).getTime(),
+        imageUrl: f.image_url
+      })));
+
+    } catch (err) {
+      console.error('Failed to process queue', err);
+      alert('Queue processing failed. Check logs.');
+    } finally {
+      setIsProcessingQueue(false);
     }
   };
+
+  const [editingFile, setEditingFile] = useState<ParsedFile | null>(null);
 
   const stats = {
     total: files.length,
@@ -315,6 +354,23 @@ const App: React.FC = () => {
               >
                 <ArrowDownTrayIcon className="w-5 h-5 mr-2" />
                 Download All
+              </button>
+              <button
+                onClick={runQueueProcessor}
+                disabled={isProcessingQueue}
+                className="inline-flex items-center px-4 py-2 border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 text-sm font-semibold rounded-lg transition shadow-sm disabled:opacity-50"
+              >
+                {isProcessingQueue ? (
+                  <>
+                    <ClockIcon className="w-5 h-5 mr-2 animate-spin" />
+                    Processing…
+                  </>
+                ) : (
+                  <>
+                    <DocumentArrowUpIcon className="w-5 h-5 mr-2" />
+                    Process Queue
+                  </>
+                )}
               </button>
           </div>
         </div>
@@ -384,6 +440,65 @@ const App: React.FC = () => {
           </div>
         </div>
       )}
+      {editingFile && (
+        <div className="fixed inset-0 z-[100] bg-black/60 flex items-center justify-center p-6">
+          <div className="bg-white rounded-xl w-full max-w-5xl max-h-[90vh] overflow-hidden flex flex-col">
+            <div className="p-4 border-b flex justify-between items-center">
+              <h2 className="font-bold">Edit CSV</h2>
+              <button onClick={() => setEditingFile(null)}>✕</button>
+            </div>
+
+            <div className="overflow-auto p-4 flex-1">
+              <table className="w-full text-xs border">
+                <tbody>
+                  {editingFile.rows.map((row, rIdx) => (
+                    <tr key={rIdx}>
+                      {Object.entries(row).map(([key, val]) => (
+                        <td key={key} className="border p-1">
+                          <input
+                            value={val as string}
+                            onChange={(e) => {
+                              const value = e.target.value;
+                              setEditingFile(prev => {
+                                if (!prev) return prev;
+                                const rows = [...prev.rows];
+                                rows[rIdx] = { ...rows[rIdx], [key]: value };
+                                return { ...prev, rows };
+                              });
+                            }}
+                            className="w-full border rounded px-1"
+                          />
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="p-4 border-t flex justify-end gap-2">
+              <button
+                onClick={() => setEditingFile(null)}
+                className="px-4 py-2 border rounded"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={async () => {
+                  await saveField(editingFile.id, { rows: editingFile.rows });
+                  setFiles(prev =>
+                    prev.map(f => f.id === editingFile.id ? editingFile : f)
+                  );
+                  setEditingFile(null);
+                }}
+                className="px-4 py-2 bg-indigo-600 text-white rounded"
+              >
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <main className="flex-1 max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-8">
         <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
@@ -440,7 +555,7 @@ const App: React.FC = () => {
                   </tr>
                 ) : (
                   filteredFiles.map((file) => {
-                    const isExpanded = expandedNotes.has(file.id);
+                    // const isExpanded = expandedNotes.has(file.id);
                     const isSelected = selectedIds.has(file.id);
                     return (
                       <tr 
@@ -465,28 +580,48 @@ const App: React.FC = () => {
                           </div>
                         </td>
                         <td className="px-6 py-4">
-                          <span className="text-sm font-mono bg-white border border-slate-200 px-2 py-1 rounded text-slate-700 shadow-sm">
-                            {file.elementNumber}
-                          </span>
+                          <input
+                            value={file.elementNumber || ''}
+                            onChange={(e) => {
+                              const value = e.target.value;
+                              setFiles(prev =>
+                                prev.map(f =>
+                                  f.id === file.id ? { ...f, elementNumber: value } : f
+                                )
+                              );
+                            }}
+                            onBlur={() => saveField(file.id, { element_number: file.elementNumber })}
+                            className="w-28 text-sm font-mono border border-slate-300 rounded px-2 py-1 focus:ring-2 focus:ring-indigo-500"
+                          />
                         </td>
                         <td className="px-6 py-4 min-w-[240px]">
-                          <div className="relative">
-                            <p className={`text-xs text-slate-600 transition-all duration-200 ${isExpanded ? '' : 'line-clamp-2'} max-w-sm whitespace-pre-wrap`}>
-                              {file.notes || '---'}
-                            </p>
-                            {file.notes && file.notes.length > 60 && (
-                              <button 
-                                onClick={() => toggleNoteExpansion(file.id)}
-                                className="text-indigo-600 hover:text-indigo-800 text-[10px] font-bold uppercase tracking-tighter mt-1 flex items-center"
-                              >
-                                {isExpanded ? (
-                                  <>Show Less <ChevronUpIcon className="w-3 h-3 ml-0.5" /></>
-                                ) : (
-                                  <>Read More <ChevronDownIcon className="w-3 h-3 ml-0.5" /></>
-                                )}
-                              </button>
-                            )}
-                          </div>
+                          <textarea
+                            value={file.notes || ''}
+                            onChange={(e) => {
+                              const value = e.target.value;
+                              setFiles(prev =>
+                                prev.map(f =>
+                                  f.id === file.id ? { ...f, notes: value } : f
+                                )
+                              );
+                            }}
+                            onBlur={() => saveField(file.id, { notes: file.notes })}
+                            placeholder="Add notes…"
+                            className="
+                              w-full
+                              text-xs
+                              text-slate-700
+                              border
+                              border-slate-200
+                              rounded-md
+                              p-2
+                              resize-y
+                              min-h-[3rem]
+                              max-h-[16rem]
+                              focus:ring-2
+                              focus:ring-indigo-500
+                            "
+                          />
                         </td>
                         <td className="px-6 py-4 text-center">
                           <input 
@@ -522,6 +657,13 @@ const App: React.FC = () => {
                             title="Download CSV"
                           >
                             <ArrowDownTrayIcon className="w-5 h-5" />
+                          </button>
+                          <button
+                            onClick={() => setEditingFile(file)}
+                            className="inline-flex p-2 text-slate-600 hover:bg-slate-100 rounded-lg"
+                            title="Edit CSV"
+                          >
+                            <PencilIcon className="w-5 h-5" />
                           </button>
                           <button 
                             onClick={() => removeFile(file.id)}
