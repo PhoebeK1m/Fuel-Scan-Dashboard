@@ -323,6 +323,8 @@ const App: React.FC = () => {
     }
   };
 
+  const [editingFile, setEditingFile] = useState<ParsedFile | null>(null);
+
   const stats = {
     total: files.length,
     completed: files.filter(f => f.status === ParseStatus.COMPLETED).length,
@@ -331,6 +333,35 @@ const App: React.FC = () => {
   };
 
   const [columnOrder, setColumnOrder] = useState<string[]>([]);
+
+  const deleteColumn = (col: string) => {
+    if (!editingFile) return;
+
+    setEditingFile(prev => {
+      if (!prev) return prev;
+
+      const rows = prev.rows.map(row => {
+        const { [col]: _, ...rest } = row as any;
+        return rest;
+      });
+
+      return { ...prev, rows };
+    });
+
+    setColumnOrder(cols => cols.filter(c => c !== col));
+  };
+
+  const COLUMN_ORDER = [
+    "date",
+    "address",
+    "length",
+    "plus_r",
+    "minus_r",
+    "bow",
+    "delta_bow",
+    "delta_length",
+    "go_no_go",
+  ];
 
 
   return (
@@ -461,45 +492,53 @@ const App: React.FC = () => {
               <h2 className="font-bold">Edit CSV</h2>
               <button onClick={() => setEditingFile(null)}>✕</button>
             </div>
-
-            {/* <div className="overflow-auto p-4 flex-1">
-              <table className="w-full text-xs border">
-                <tbody>
-                  {editingFile.rows.map((row, rIdx) => (
-                    <tr key={rIdx}>
-                      {Object.entries(row).map(([key, val]) => (
-                        <td key={key} className="border p-1">
-                          <input
-                            value={val as string}
-                            onChange={(e) => {
-                              const value = e.target.value;
-                              setEditingFile(prev => {
-                                if (!prev) return prev;
-                                const rows = [...prev.rows];
-                                rows[rIdx] = { ...rows[rIdx], [key]: value };
-                                return { ...prev, rows };
-                              });
-                            }}
-                            className="w-full border rounded px-1"
-                          />
-                        </td>
-                      ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div> */}
             <div className="overflow-auto p-4 flex-1">
-              {editingFile.rows.length > 0 && (
+              {columnOrder.length > 0 && (
                 <table className="w-full text-xs border border-slate-300 border-collapse">
-                  <thead className="sticky top-0 bg-slate-100">
+                  <thead className="sticky top-0 bg-slate-100 z-10">
                     <tr>
-                      {Object.keys(editingFile.rows[0]).map(col => (
+                      {columnOrder.map((col, i) => (
                         <th
                           key={col}
-                          className="border border-slate-300 px-2 py-1 text-left font-semibold"
+                          className="border border-slate-300 px-2 py-1 font-semibold whitespace-nowrap"
                         >
-                          {col}
+                          <div className="flex items-center gap-1">
+                            <span>{col}</span>
+
+                            <button
+                              disabled={i === 0}
+                              onClick={() =>
+                                setColumnOrder(cols => {
+                                  const next = [...cols];
+                                  [next[i - 1], next[i]] = [next[i], next[i - 1]];
+                                  return next;
+                                })
+                              }
+                              className="text-xs px-1 disabled:opacity-30"
+                            >
+                              ←
+                            </button>
+                            <button
+                              onClick={() => deleteColumn(col)}
+                              className="text-rose-500 hover:text-rose-700 text-xs px-1"
+                              title="Delete column"
+                            >
+                              ✕
+                            </button>
+                            <button
+                              disabled={i === columnOrder.length - 1}
+                              onClick={() =>
+                                setColumnOrder(cols => {
+                                  const next = [...cols];
+                                  [next[i], next[i + 1]] = [next[i + 1], next[i]];
+                                  return next;
+                                })
+                              }
+                              className="text-xs px-1 disabled:opacity-30"
+                            >
+                              →
+                            </button>
+                          </div>
                         </th>
                       ))}
                     </tr>
@@ -508,7 +547,7 @@ const App: React.FC = () => {
                   <tbody>
                     {editingFile.rows.map((row, rIdx) => (
                       <tr key={rIdx}>
-                        {Object.keys(editingFile.rows[0]).map(col => (
+                        {columnOrder.map(col => (
                           <td key={col} className="border border-slate-300 p-1">
                             <input
                               value={(row as any)[col] ?? ''}
@@ -531,7 +570,6 @@ const App: React.FC = () => {
                 </table>
               )}
             </div>
-
             <div className="p-4 border-t flex justify-end gap-2">
               <button
                 onClick={() => setEditingFile(null)}
@@ -715,7 +753,24 @@ const App: React.FC = () => {
                             <ArrowDownTrayIcon className="w-5 h-5" />
                           </button>
                           <button
-                            onClick={() => setEditingFile(file)}
+                            onClick={() => {
+                              // Normalize rows into canonical order
+                              const normalizedRows = file.rows.map(row => {
+                                const ordered: Record<string, any> = {};
+                                COLUMN_ORDER.forEach(col => {
+                                  ordered[col] = (row as any)[col] ?? "";
+                                });
+                                return ordered;
+                              });
+
+                              setEditingFile({
+                                ...file,
+                                rows: normalizedRows,
+                              });
+
+                              // Force canonical column order
+                              setColumnOrder([...COLUMN_ORDER]);
+                            }}
                             className="inline-flex p-2 text-slate-600 hover:bg-slate-100 rounded-lg"
                             title="Edit CSV"
                           >
